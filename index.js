@@ -5,7 +5,10 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// ✅ Token de acceso temporal (válido 23 hrs aprox)
 const TOKEN = 'EAAa9HR9WwQIBO0qtUpNBEzTRvZBtMBYPBZBSxXNwBiq7tt9KgAifYgZBV0BHvbtUFpcRDEZAg4fFXksYZByl8bM2g7DUWISjLeX7SZBAjdcjRRfNMmCsERcposWXnjvZB1osy2neBGKawiobFZCTTo3BGgJ74oE0wE7I2RAL7UrPqZBuSvbjYIbgnyR7Htxfl1yBrp3aTRI2ZBntZCxZCm0Ue6eikAiNd7IHg6KZCPJgZD';
+// ✅ ID del número de teléfono de prueba (de tu dashboard)
+const PHONE_NUMBER_ID = '720451244480251';
 
 const questions = [
   "¡Buenos días! Bienvenido/a a Econtrol. Por favor, indique su nombre completo:",
@@ -18,36 +21,39 @@ const questions = [
   "¡Gracias por su solicitud! Nos pondremos en contacto en el menor tiempo posible."
 ];
 
-const questionsWithOther = [2, 4];
+const questionsWithOther = [2, 4]; // índices donde puede escribirse "Otro"
 const userStates = {};
 
 async function sendMessage(to, message) {
   try {
-    await axios.post(`https://graph.facebook.com/v15.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
       messaging_product: "whatsapp",
       to,
       text: { body: message }
     }, {
-      headers: { Authorization: `Bearer ${TOKEN}` }
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json'
+      }
     });
+    console.log(`📤 Mensaje enviado a ${to}: ${message}`);
   } catch (error) {
-    console.error('Error enviando mensaje:', error.response?.data || error.message);
+    console.error('❌ Error enviando mensaje:', error.response?.data || error.message);
   }
 }
 
 app.post('/webhook', async (req, res) => {
   try {
-    const entry = req.body.entry && req.body.entry[0];
-    const changes = entry?.changes && entry.changes[0];
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
     const value = changes?.value;
 
-    if (value && value.messages && value.messages.length > 0) {
+    if (value?.messages?.length > 0) {
       const mensaje = value.messages[0].text?.body?.trim() || '';
       const telefono = value.contacts[0].wa_id;
 
       if (!userStates[telefono]) {
         userStates[telefono] = { step: 0, answers: [], expectingOtherDetail: false };
-        console.log(`Iniciar conversación con ${telefono}`);
         await sendMessage(telefono, questions[0]);
       } else {
         const userData = userStates[telefono];
@@ -61,13 +67,13 @@ app.post('/webhook', async (req, res) => {
             await sendMessage(telefono, questions[userData.step]);
           } else {
             await sendMessage(telefono, questions[questions.length - 1]);
-            console.log(`Fin de la conversación con respuestas:`, userData.answers);
+            console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
             delete userStates[telefono];
           }
         } else {
           userData.answers.push(mensaje);
 
-          if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase() === 'otro') {
+          if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase().startsWith('otro')) {
             userData.expectingOtherDetail = true;
             await sendMessage(telefono, "Por favor, especifique su opción:");
           } else {
@@ -77,22 +83,23 @@ app.post('/webhook', async (req, res) => {
               await sendMessage(telefono, questions[userData.step]);
             } else {
               await sendMessage(telefono, questions[questions.length - 1]);
-              console.log(`Fin de la conversación con respuestas:`, userData.answers);
+              console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
               delete userStates[telefono];
             }
           }
         }
       }
+
       res.status(200).send('EVENT_RECEIVED');
     } else {
       res.status(200).send('NO_MESSAGE');
     }
   } catch (error) {
-    console.error('Error en webhook:', error);
+    console.error('❌ Error en webhook:', error);
     res.status(500).send('Error interno');
   }
 });
 
 app.listen(port, () => {
-  console.log(`Servidor webhook escuchando en el puerto ${port}`);
+  console.log(`🚀 Servidor webhook escuchando en el puerto ${port}`);
 });
