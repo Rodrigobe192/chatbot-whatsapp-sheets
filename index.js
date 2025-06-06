@@ -25,7 +25,7 @@ const userStates = {};
 
 async function sendMessage(to, message) {
   try {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+    await axios.post(`https://graph.facebook.com/v18.0/${720451244480251}/messages`, {
       messaging_product: "whatsapp",
       to,
       text: { body: message }
@@ -43,7 +43,7 @@ async function sendMessage(to, message) {
 
 async function sendTemplateMessage(to) {
   try {
-    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+    await axios.post(`https://graph.facebook.com/v18.0/${720451244480251}/messages`, {
       messaging_product: "whatsapp",
       to,
       type: "template",
