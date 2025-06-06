@@ -1,10 +1,12 @@
 const express = require('express');
+const axios = require('axios');
 const app = express();
 const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// Preguntas fijas (ordenadas)
+const TOKEN = 'TU_TOKEN_DE_ACCESO_AQUI';
+
 const questions = [
   "¡Buenos días! Bienvenido/a a Econtrol. Por favor, indique su nombre completo:",
   "¿En qué distrito se encuentra ubicado/a?",
@@ -16,39 +18,24 @@ const questions = [
   "¡Gracias por su solicitud! Nos pondremos en contacto en el menor tiempo posible."
 ];
 
-// Índices de preguntas que tienen la opción "Otro"
 const questionsWithOther = [2, 4];
-
-// Estado en memoria para cada usuario (teléfono)
 const userStates = {};
 
-// Función para obtener la pregunta actual considerando si se está pidiendo especificar "Otro"
-function getCurrentQuestion(userData) {
-  // Si estamos en modo "especificar otro", la pregunta es para que escriba el detalle
-  if (userData.expectingOtherDetail) {
-    return "Por favor, especifique su opción:";
+async function sendMessage(to, message) {
+  try {
+    await axios.post(`https://graph.facebook.com/v15.0/${process.env.WHATSAPP_PHONE_ID}/messages`, {
+      messaging_product: "whatsapp",
+      to,
+      text: { body: message }
+    }, {
+      headers: { Authorization: `Bearer ${TOKEN}` }
+    });
+  } catch (error) {
+    console.error('Error enviando mensaje:', error.response?.data || error.message);
   }
-  return questions[userData.step];
 }
 
-// Webhook para verificación
-app.get('/webhook', (req, res) => {
-  const VERIFY_TOKEN = "chatbotecontrol";
-  const mode = req.query['hub.mode'];
-  const token = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if (mode && token && mode === 'subscribe' && token === VERIFY_TOKEN) {
-    console.log('Verificación exitosa');
-    res.status(200).send(challenge);
-  } else {
-    console.log('Verificación fallida');
-    res.sendStatus(403);
-  }
-});
-
-// Endpoint para recibir mensajes (POST)
-app.post('/webhook', (req, res) => {
+app.post('/webhook', async (req, res) => {
   try {
     const entry = req.body.entry && req.body.entry[0];
     const changes = entry?.changes && entry.changes[0];
@@ -59,56 +46,43 @@ app.post('/webhook', (req, res) => {
       const telefono = value.contacts[0].wa_id;
 
       if (!userStates[telefono]) {
-        // Nuevo usuario: iniciar en pregunta 0
-        userStates[telefono] = {
-          step: 0,
-          answers: [],
-          expectingOtherDetail: false,
-        };
+        userStates[telefono] = { step: 0, answers: [], expectingOtherDetail: false };
         console.log(`Iniciar conversación con ${telefono}`);
-        console.log(`Enviar pregunta: ${questions[0]}`);
+        await sendMessage(telefono, questions[0]);
       } else {
         const userData = userStates[telefono];
 
         if (userData.expectingOtherDetail) {
-          // Aquí el usuario está escribiendo la especificación para "Otro"
-          userData.answers.push(mensaje); // guardamos la especificación
+          userData.answers.push(mensaje);
           userData.expectingOtherDetail = false;
-          userData.step++; // pasamos a la siguiente pregunta
-          
+          userData.step++;
+
           if (userData.step < questions.length - 1) {
-            console.log(`Respuesta especificada de ${telefono}: ${mensaje}`);
-            console.log(`Enviar pregunta: ${questions[userData.step]}`);
+            await sendMessage(telefono, questions[userData.step]);
           } else {
-            console.log(`Última respuesta de ${telefono}: ${mensaje}`);
+            await sendMessage(telefono, questions[questions.length - 1]);
             console.log(`Fin de la conversación con respuestas:`, userData.answers);
             delete userStates[telefono];
           }
-
         } else {
-          // Usuario responde normalmente
           userData.answers.push(mensaje);
 
-          // Revisamos si la respuesta es "Otro" en preguntas que tienen esa opción
           if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase() === 'otro') {
             userData.expectingOtherDetail = true;
-            console.log(`Respuesta 'Otro' detectada para pregunta ${userData.step} de ${telefono}`);
-            console.log(`Pedir especificación: Por favor, especifique su opción:`);
+            await sendMessage(telefono, "Por favor, especifique su opción:");
           } else {
             userData.step++;
 
             if (userData.step < questions.length - 1) {
-              console.log(`Respuesta de ${telefono}: ${mensaje}`);
-              console.log(`Enviar pregunta: ${questions[userData.step]}`);
+              await sendMessage(telefono, questions[userData.step]);
             } else {
-              console.log(`Última respuesta de ${telefono}: ${mensaje}`);
+              await sendMessage(telefono, questions[questions.length - 1]);
               console.log(`Fin de la conversación con respuestas:`, userData.answers);
               delete userStates[telefono];
             }
           }
         }
       }
-
       res.status(200).send('EVENT_RECEIVED');
     } else {
       res.status(200).send('NO_MESSAGE');
