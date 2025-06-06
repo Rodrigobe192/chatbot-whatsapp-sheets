@@ -5,9 +5,8 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
-// ✅ Token de acceso temporal (válido 23 hrs aprox)
+// 🔐 Token de acceso temporal
 const TOKEN = 'EAAa9HR9WwQIBO0qtUpNBEzTRvZBtMBYPBZBSxXNwBiq7tt9KgAifYgZBV0BHvbtUFpcRDEZAg4fFXksYZByl8bM2g7DUWISjLeX7SZBAjdcjRRfNMmCsERcposWXnjvZB1osy2neBGKawiobFZCTTo3BGgJ74oE0wE7I2RAL7UrPqZBuSvbjYIbgnyR7Htxfl1yBrp3aTRI2ZBntZCxZCm0Ue6eikAiNd7IHg6KZCPJgZD';
-// ✅ ID del número de teléfono de prueba (de tu dashboard)
 const PHONE_NUMBER_ID = '720451244480251';
 
 const questions = [
@@ -21,7 +20,7 @@ const questions = [
   "¡Gracias por su solicitud! Nos pondremos en contacto en el menor tiempo posible."
 ];
 
-const questionsWithOther = [2, 4]; // índices donde puede escribirse "Otro"
+const questionsWithOther = [2, 4];
 const userStates = {};
 
 async function sendMessage(to, message) {
@@ -42,6 +41,28 @@ async function sendMessage(to, message) {
   }
 }
 
+async function sendTemplateMessage(to) {
+  try {
+    await axios.post(`https://graph.facebook.com/v18.0/${PHONE_NUMBER_ID}/messages`, {
+      messaging_product: "whatsapp",
+      to,
+      type: "template",
+      template: {
+        name: "econtrol_chatbot", // Tu plantilla aprobada
+        language: { code: "es_PE" }
+      }
+    }, {
+      headers: {
+        Authorization: `Bearer ${TOKEN}`,
+        'Content-Type': 'application/json'
+      }
+    });
+    console.log(`📤 Plantilla enviada a ${to}`);
+  } catch (error) {
+    console.error('❌ Error enviando plantilla:', error.response?.data || error.message);
+  }
+}
+
 app.post('/webhook', async (req, res) => {
   try {
     const entry = req.body.entry?.[0];
@@ -53,40 +74,43 @@ app.post('/webhook', async (req, res) => {
       const telefono = value.contacts[0].wa_id;
 
       if (!userStates[telefono]) {
-        userStates[telefono] = { step: 0, answers: [], expectingOtherDetail: false };
-        await sendMessage(telefono, questions[0]);
+        userStates[telefono] = { step: -1, answers: [], expectingOtherDetail: false };
+
+        // Enviar plantilla al inicio
+        await sendTemplateMessage(telefono);
+        console.log(`👋 Plantilla enviada. Esperando respuesta del usuario ${telefono}`);
       } else {
         const userData = userStates[telefono];
+
+        // Si step está en -1, es porque estamos esperando respuesta a la plantilla
+        if (userData.step === -1) {
+          userData.step = 0;
+          await sendMessage(telefono, questions[0]);
+          return res.status(200).send('PRIMERA_PREGUNTA_ENVIADA');
+        }
 
         if (userData.expectingOtherDetail) {
           userData.answers.push(mensaje);
           userData.expectingOtherDetail = false;
           userData.step++;
-
-          if (userData.step < questions.length - 1) {
-            await sendMessage(telefono, questions[userData.step]);
-          } else {
-            await sendMessage(telefono, questions[questions.length - 1]);
-            console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
-            delete userStates[telefono];
-          }
         } else {
           userData.answers.push(mensaje);
 
           if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase().startsWith('otro')) {
             userData.expectingOtherDetail = true;
             await sendMessage(telefono, "Por favor, especifique su opción:");
-          } else {
-            userData.step++;
-
-            if (userData.step < questions.length - 1) {
-              await sendMessage(telefono, questions[userData.step]);
-            } else {
-              await sendMessage(telefono, questions[questions.length - 1]);
-              console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
-              delete userStates[telefono];
-            }
+            return res.status(200).send('EXPECTING_OTHER');
           }
+
+          userData.step++;
+        }
+
+        if (userData.step < questions.length - 1) {
+          await sendMessage(telefono, questions[userData.step]);
+        } else {
+          await sendMessage(telefono, questions[questions.length - 1]);
+          console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
+          delete userStates[telefono];
         }
       }
 
