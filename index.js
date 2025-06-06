@@ -8,7 +8,7 @@ app.use(express.json());
 // 🔐 Configuración - Reemplaza con tus valores
 const TOKEN = 'EAAa9HR9WwQIBO0qtUpNBEzTRvZBtMBYPBZBSxXNwBiq7tt9KgAifYgZBV0BHvbtUFpcRDEZAg4fFXksYZByl8bM2g7DUWISjLeX7SZBAjdcjRRfNMmCsERcposWXnjvZB1osy2neBGKawiobFZCTTo3BGgJ74oE0wE7I2RAL7UrPqZBuSvbjYIbgnyR7Htxfl1yBrp3aTRI2ZBntZCxZCm0Ue6eikAiNd7IHg6KZCPJgZD';
 const PHONE_NUMBER_ID = '720451244480251';
-const VERIFY_TOKEN = 'chatbotecontrol'; // Debe coincidir con el configurado en Meta Dev
+const VERIFY_TOKEN = 'chatbotecontrol';
 
 // Preguntas del flujo conversacional
 const questions = [
@@ -22,8 +22,8 @@ const questions = [
   "¡Gracias por su solicitud! Nos pondremos en contacto en el menor tiempo posible."
 ];
 
-const questionsWithOther = [2, 4]; // Preguntas que tienen opción "Otro"
-const userStates = {}; // Almacena el estado de cada usuario
+const questionsWithOther = [2, 4];
+const userStates = {};
 
 // Función para enviar mensajes de texto
 async function sendMessage(to, message) {
@@ -89,7 +89,7 @@ async function sendTemplateMessage(to) {
   }
 }
 
-// Verificación del webhook (GET)
+// Verificación del webhook
 app.get('/webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
@@ -104,29 +104,24 @@ app.get('/webhook', (req, res) => {
   }
 });
 
-// Endpoint para recibir mensajes (POST)
+// Manejo de mensajes entrantes
 app.post('/webhook', async (req, res) => {
   console.log('📨 Evento recibido:', JSON.stringify(req.body, null, 2));
   
   try {
-    // Verificar estructura básica del mensaje
     if (!req.body.object || !req.body.entry) {
-      console.log("⚠️ Estructura de mensaje no reconocida");
       return res.status(200).send('EVENT_NOT_RECOGNIZED');
     }
 
     const entry = req.body.entry[0];
     const changes = entry.changes[0];
     
-    // Solo procesar eventos de mensajes
     if (changes.field !== 'messages') {
-      console.log("ℹ️ Evento no es un mensaje");
       return res.status(200).send('NOT_A_MESSAGE_EVENT');
     }
 
     const value = changes.value;
     
-    // Procesar si hay mensajes
     if (value.messages && value.messages.length > 0) {
       const message = value.messages[0];
       const phoneNumber = message.from;
@@ -135,70 +130,63 @@ app.post('/webhook', async (req, res) => {
       console.log(`📩 Mensaje de ${phoneNumber}: ${messageBody}`);
 
       if (!userStates[phoneNumber]) {
-        // Nuevo usuario - Iniciar conversación
+        // Nuevo usuario - Solo enviar plantilla inicial
         userStates[phoneNumber] = { 
-          step: -1, 
-          answers: [], 
+          step: -2, // -2 = Plantilla enviada, esperando interacción
+          answers: [],
           expectingOtherDetail: false,
           lastInteraction: new Date()
         };
         
-        // Enviar plantilla de inicio
         await sendTemplateMessage(phoneNumber);
-        console.log(`👋 Plantilla enviada a ${phoneNumber}. Esperando respuesta...`);
+        console.log(`👋 Plantilla inicial enviada a ${phoneNumber}`);
+        return res.status(200).send('INITIAL_TEMPLATE_SENT');
+      }
+
+      const userData = userStates[phoneNumber];
+      userData.lastInteraction = new Date();
+
+      if (userData.step === -2) {
+        // Usuario interactuó después de la plantilla - comenzar cuestionario
+        userData.step = 0;
+        await sendMessage(phoneNumber, questions[0]);
+        console.log(`💬 Comenzando cuestionario con ${phoneNumber}`);
+        return res.status(200).send('QUESTIONNAIRE_STARTED');
+      }
+
+      // Manejo normal del flujo de preguntas
+      if (userData.expectingOtherDetail) {
+        userData.answers.push(messageBody);
+        userData.expectingOtherDetail = false;
+        userData.step++;
       } else {
-        // Usuario existente - Continuar flujo
-        const userData = userStates[phoneNumber];
-        userData.lastInteraction = new Date();
-        
-        if (userData.step === -1) {
-          // Después de la plantilla, comenzar con preguntas
-          userData.step = 0;
-          await sendMessage(phoneNumber, questions[0]);
-          return res.status(200).send('FIRST_QUESTION_SENT');
+        userData.answers.push(messageBody);
+
+        if (questionsWithOther.includes(userData.step) && messageBody.toLowerCase().startsWith('otro')) {
+          userData.expectingOtherDetail = true;
+          await sendMessage(phoneNumber, "Por favor, especifique su opción:");
+          return res.status(200).send('EXPECTING_OTHER_DETAIL');
         }
 
-        if (userData.expectingOtherDetail) {
-          // Procesar detalle de "Otro"
-          userData.answers.push(messageBody);
-          userData.expectingOtherDetail = false;
-          userData.step++;
-        } else {
-          // Respuesta normal
-          userData.answers.push(messageBody);
+        userData.step++;
+      }
 
-          // Verificar si eligió "Otro"
-          if (questionsWithOther.includes(userData.step) && messageBody.toLowerCase().startsWith('otro')) {
-            userData.expectingOtherDetail = true;
-            await sendMessage(phoneNumber, "Por favor, especifique su opción:");
-            return res.status(200).send('EXPECTING_OTHER_DETAIL');
-          }
-
-          userData.step++;
-        }
-
-        // Continuar con siguiente pregunta o finalizar
-        if (userData.step < questions.length - 1) {
-          await sendMessage(phoneNumber, questions[userData.step]);
-        } else {
-          // Fin del cuestionario
-          await sendMessage(phoneNumber, questions[questions.length - 1]);
-          console.log(`✅ Fin de conversación con ${phoneNumber}. Respuestas:`, userData.answers);
-          delete userStates[phoneNumber];
-        }
+      // Continuar con siguiente pregunta o finalizar
+      if (userData.step < questions.length) {
+        await sendMessage(phoneNumber, questions[userData.step]);
+      } else {
+        await sendMessage(phoneNumber, questions[questions.length - 1]);
+        console.log(`✅ Cuestionario completado con ${phoneNumber}`, userData.answers);
+        delete userStates[phoneNumber];
       }
       
       res.status(200).send('EVENT_PROCESSED');
     } else {
-      console.log("ℹ️ No hay mensajes en el evento");
       res.status(200).send('NO_MESSAGES_IN_EVENT');
     }
   } catch (error) {
-    console.error('❌ Error crítico en webhook:', {
-      error: error.message,
-      stack: error.stack
-    });
-    res.status(200).send('ERROR_PROCESSING'); // Siempre responde 200 a Meta
+    console.error('❌ Error en webhook:', error);
+    res.status(200).send('ERROR_PROCESSING');
   }
 });
 
@@ -206,13 +194,11 @@ app.post('/webhook', async (req, res) => {
 app.get('/health', (req, res) => {
   res.status(200).json({
     status: 'OK',
-    usersActive: Object.keys(userStates).length,
-    environment: process.env.NODE_ENV || 'development'
+    usersActive: Object.keys(userStates).length
   });
 });
 
 // Iniciar servidor
 app.listen(port, () => {
-  console.log(`🚀 Servidor webhook escuchando en el puerto ${port}`);
-  console.log(`🔗 URL del webhook: https://<tu-url-render>.onrender.com/webhook`);
+  console.log(`🚀 Servidor escuchando en puerto ${port}`);
 });
