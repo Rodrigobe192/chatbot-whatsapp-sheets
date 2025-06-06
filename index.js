@@ -49,12 +49,14 @@ app.post('/webhook', async (req, res) => {
       const nombre = value.contacts[0].profile?.name || 'Sin nombre';
       const telefono = value.contacts[0].wa_id || 'Sin teléfono';
 
+      console.log('Datos a guardar en Sheets:', [new Date().toISOString(), nombre, telefono, mensaje]);
+
       // Append data to Google Sheets
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
-        range: 'Sheet1!A:C',
+        range: 'ChatBotEcontrol!A:D',
         valueInputOption: 'RAW',
-        requestBody: {   // aquí debe usarse requestBody
+        requestBody: {
           values: [
             [new Date().toISOString(), nombre, telefono, mensaje],
           ],
