@@ -5,6 +5,7 @@ const port = process.env.PORT || 3000;
 
 app.use(express.json());
 
+// 🔐 Token de acceso temporal
 const TOKEN = 'EAAa9HR9WwQIBO0qtUpNBEzTRvZBtMBYPBZBSxXNwBiq7tt9KgAifYgZBV0BHvbtUFpcRDEZAg4fFXksYZByl8bM2g7DUWISjLeX7SZBAjdcjRRfNMmCsERcposWXnjvZB1osy2neBGKawiobFZCTTo3BGgJ74oE0wE7I2RAL7UrPqZBuSvbjYIbgnyR7Htxfl1yBrp3aTRI2ZBntZCxZCm0Ue6eikAiNd7IHg6KZCPJgZD';
 const PHONE_NUMBER_ID = '720451244480251';
 
@@ -47,7 +48,7 @@ async function sendTemplateMessage(to) {
       to,
       type: "template",
       template: {
-        name: "econtrol_chatbot", // Tu plantilla aprobada
+        name: "econtrol_chatbot",
         language: { code: "es_PE" }
       }
     }, {
@@ -73,37 +74,43 @@ app.post('/webhook', async (req, res) => {
       const telefono = value.contacts[0].wa_id;
 
       if (!userStates[telefono]) {
-        userStates[telefono] = { step: 0, answers: [], expectingOtherDetail: false };
+        userStates[telefono] = { step: -1, answers: [], expectingOtherDetail: false };
 
+        // Enviar plantilla al inicio
         await sendTemplateMessage(telefono);
-        await sendMessage(telefono, questions[0]);
-        return res.status(200).send('PLANTILLA_Y_PRIMERA_PREGUNTA_ENVIADAS');
-      }
-
-      const userData = userStates[telefono];
-
-      if (userData.expectingOtherDetail) {
-        userData.answers.push(mensaje);
-        userData.expectingOtherDetail = false;
-        userData.step++;
+        console.log(`👋 Plantilla enviada. Esperando respuesta del usuario ${telefono}`);
       } else {
-        userData.answers.push(mensaje);
+        const userData = userStates[telefono];
 
-        if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase().startsWith('otro')) {
-          userData.expectingOtherDetail = true;
-          await sendMessage(telefono, "Por favor, especifique su opción:");
-          return res.status(200).send('EXPECTING_OTHER');
+        if (userData.step === -1) {
+          userData.step = 0;
+          await sendMessage(telefono, questions[0]);
+          return res.status(200).send('PRIMERA_PREGUNTA_ENVIADA');
         }
 
-        userData.step++;
-      }
+        if (userData.expectingOtherDetail) {
+          userData.answers.push(mensaje);
+          userData.expectingOtherDetail = false;
+          userData.step++;
+        } else {
+          userData.answers.push(mensaje);
 
-      if (userData.step < questions.length - 1) {
-        await sendMessage(telefono, questions[userData.step]);
-      } else {
-        await sendMessage(telefono, questions[questions.length - 1]);
-        console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
-        delete userStates[telefono];
+          if (questionsWithOther.includes(userData.step) && mensaje.toLowerCase().startsWith('otro')) {
+            userData.expectingOtherDetail = true;
+            await sendMessage(telefono, "Por favor, especifique su opción:");
+            return res.status(200).send('EXPECTING_OTHER');
+          }
+
+          userData.step++;
+        }
+
+        if (userData.step < questions.length - 1) {
+          await sendMessage(telefono, questions[userData.step]);
+        } else {
+          await sendMessage(telefono, questions[questions.length - 1]);
+          console.log(`✅ Fin de conversación con ${telefono}. Respuestas:`, userData.answers);
+          delete userStates[telefono];
+        }
       }
 
       res.status(200).send('EVENT_RECEIVED');
