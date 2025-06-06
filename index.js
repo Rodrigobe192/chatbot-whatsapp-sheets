@@ -16,8 +16,8 @@ const auth = new google.auth.GoogleAuth({
 
 const sheets = google.sheets({ version: 'v4', auth });
 
-// ID de la hoja de cálculo (spreadsheet)
-const SPREADSHEET_ID = '1AbCDeFGhIjKLmNOPqRSTuVWxyz1234567890';
+// Usa el ID correcto de tu hoja de cálculo:
+const SPREADSHEET_ID = '1TXuK1ZzxYogGpenEIto1gSi5Fh1OJcR48XGg4VrbrOY';
 
 // Webhook para verificación
 app.get('/webhook', (req, res) => {
@@ -40,24 +40,33 @@ app.post('/webhook', async (req, res) => {
   console.log('Mensaje recibido:', JSON.stringify(req.body, null, 2));
   
   try {
-    // Aquí debes extraer los datos que quieres guardar. Ejemplo simple:
-    const mensaje = req.body.entry[0].changes[0].value.messages[0].text.body;
-    const nombre = req.body.entry[0].changes[0].value.contacts[0].profile.name;
-    const telefono = req.body.entry[0].changes[0].value.contacts[0].wa_id;
-    
-    // Agregar una fila nueva a la hoja de cálculo
-    await sheets.spreadsheets.values.append({
-      spreadsheetId: SPREADSHEET_ID,
-      range: 'Sheet1!A:C', // Cambia 'Sheet1' si tu hoja tiene otro nombre
-      valueInputOption: 'RAW',
-      resource: {
-        values: [
-          [new Date().toISOString(), nombre, telefono, mensaje],
-        ],
-      },
-    });
+    const entry = req.body.entry && req.body.entry[0];
+    const changes = entry?.changes && entry.changes[0];
+    const value = changes?.value;
 
-    res.status(200).send('EVENT_RECEIVED');
+    if (value && value.messages && value.messages.length > 0) {
+      const mensaje = value.messages[0].text?.body || '';
+      const nombre = value.contacts[0].profile?.name || 'Sin nombre';
+      const telefono = value.contacts[0].wa_id || 'Sin teléfono';
+
+      // Append data to Google Sheets
+      await sheets.spreadsheets.values.append({
+        spreadsheetId: SPREADSHEET_ID,
+        range: 'Sheet1!A:C',
+        valueInputOption: 'RAW',
+        requestBody: {   // aquí debe usarse requestBody
+          values: [
+            [new Date().toISOString(), nombre, telefono, mensaje],
+          ],
+        },
+      });
+
+      res.status(200).send('EVENT_RECEIVED');
+    } else {
+      // Si no hay mensajes, responder OK para no volver a enviar el webhook
+      res.status(200).send('NO_MESSAGE');
+    }
+
   } catch (error) {
     console.error('Error al guardar en Sheets:', error);
     res.status(500).send('Error interno');
